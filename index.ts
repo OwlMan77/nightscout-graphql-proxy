@@ -1,8 +1,8 @@
-require('dotenv').config();
-const { createServer } = require('node:http');
-const { createYoga, createSchema } = require('graphql-yoga');
-const { typeDefs } = require('./src/schema');
-const { resolvers } = require('./src/resolvers');
+import 'dotenv/config';
+import { createServer } from 'node:http';
+import { createYoga, createSchema } from 'graphql-yoga';
+import { typeDefs } from './src/schema';
+import { resolvers } from './src/resolvers';
 
 const schema = createSchema({
   typeDefs,

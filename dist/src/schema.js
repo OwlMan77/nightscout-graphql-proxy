@@ -1,10 +1,14 @@
-const typeDefs = /* GraphQL */ `
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.typeDefs = void 0;
+exports.typeDefs = `
   type Entry {
     _id: String
     type: String
     dateString: String
     date: Float
     sgv: Float
+    mmol: Float
     direction: String
     noise: Float
     filtered: Float
@@ -52,5 +56,3 @@ const typeDefs = /* GraphQL */ `
     status: Status
   }
 `;
-
-module.exports = { typeDefs };
