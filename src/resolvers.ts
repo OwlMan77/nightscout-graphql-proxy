@@ -91,12 +91,11 @@ export const resolvers = {
     profiles: (_: unknown, args: QueryArgs) => fetchNightscout('/profile.json', args),
     status: (_: unknown, args: QueryArgs) => fetchNightscout('/status.json', args),
 
-    glucoseStats: async (_: unknown, args: StatsArgs) => {
-      const hours = args.hours ?? 24;
+    glucoseStats: async (_: unknown, { hours = 24, low, high }: StatsArgs) => {
       // CGM reports ~12 readings/hour; over-fetch a little so the window is complete.
       const count = Math.ceil(hours * 12 * 1.2) + 20;
       const entries: Entry[] = await fetchNightscout('/entries.json', { hours, count });
-      return computeGlucoseStats(entries, args.low, args.high, hours);
+      return computeGlucoseStats(entries, low, high, hours);
     },
 
     deviceStatus: async (_: unknown, args: { count?: number }) => {
@@ -104,12 +103,8 @@ export const resolvers = {
       return records.map(mapDeviceStatus);
     },
 
-    insulinStatus: async (_: unknown, args: InsulinStatusArgs) => {
-      const vialUnits = args.vialUnits ?? 1000;
-      const reservoirSize = args.reservoirSize ?? 200;
-      const batchVials = args.batchVials ?? 3;
-      const orderAtVialsRemaining = args.orderAtVialsRemaining ?? 1;
-      const keyword = (args.batchNoteKeyword ?? 'batch').toLowerCase();
+    insulinStatus: async (_: unknown, {vialUnits = 1000, reservoirSize = 200, batchVials = 3, orderAtVialsRemaining = 1, batchNoteKeyword = 'batch' }: InsulinStatusArgs) => {
+      const keyword = batchNoteKeyword.toLowerCase();
 
       // Notes are returned most-recent-first, so the first match is the latest.
       const notes: any[] = await nsGet('/treatments.json', {
@@ -165,9 +160,9 @@ export const resolvers = {
   },
 
   Mutation: {
-    recordInsulinOrder: async (_: unknown, args: RecordInsulinOrderArgs) => {
-      const vials = args.vials ?? 3;
-      const extra = args.note ? ` ${args.note}` : '';
+    recordInsulinOrder: async (_: unknown, {vials = 3, note = ''}: RecordInsulinOrderArgs) => {
+
+      const extra = `${note}`;
       const createdAt = new Date().toISOString();
       const notes = `${ORDER_TAG} Ordered insulin batch: ${vials} vial(s).${extra}`;
       const payload = [
