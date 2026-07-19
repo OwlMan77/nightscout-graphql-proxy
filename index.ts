@@ -1,19 +1,8 @@
 import 'dotenv/config';
 import { createServer } from 'node:http';
-import { createYoga, createSchema } from 'graphql-yoga';
-import { typeDefs } from './src/schema';
-import { resolvers } from './src/resolvers';
+import { createYogaInstance } from './src/server';
 
-const schema = createSchema({
-  typeDefs,
-  resolvers
-});
-
-const yoga = createYoga({
-  schema,
-  graphqlEndpoint: '/graphql'
-});
-
+const yoga = createYogaInstance();
 const server = createServer(yoga);
 
 const PORT = process.env.PORT || 4000;

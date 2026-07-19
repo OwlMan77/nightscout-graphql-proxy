@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars and fill in. Do NOT commit terraform.tfvars.
+# proxy_api_key is generated & rotated automatically per deploy (not set here);
+# read the current value with: terraform -chdir=infra output -raw proxy_api_key
+aws_region            = "us-east-1"
+nightscout_url        = "https://your-nightscout-site.com/api/v1"
+nightscout_api_secret = "your_hashed_api_secret"
