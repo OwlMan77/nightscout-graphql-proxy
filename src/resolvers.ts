@@ -60,6 +60,17 @@ const nsPost = async (endpoint: string, payload: unknown): Promise<any> => {
   return response.json();
 };
 
+/**
+ * Which field each collection stores its timestamp in. Entries carry
+ * `dateString`; treatments carry `created_at`. Filtering treatments on
+ * `dateString` matches nothing, so a windowed query silently returns [].
+ * Endpoints absent from this map (profile, status) are not date-filterable.
+ */
+const DATE_FIELD: Record<string, string> = {
+  '/entries.json': 'dateString',
+  '/treatments.json': 'created_at',
+};
+
 /** Translate friendly QueryArgs (count/find/hours/from/to) into Nightscout params. */
 const fetchNightscout = (endpoint: string, args: QueryArgs): Promise<any> => {
   const params: Record<string, string | number | undefined> = {
@@ -70,8 +81,11 @@ const fetchNightscout = (endpoint: string, args: QueryArgs): Promise<any> => {
   if (!from && args.hours) {
     from = new Date(Date.now() - args.hours * 60 * 60 * 1000).toISOString();
   }
-  if (from) params['find[dateString][$gte]'] = from;
-  if (args.to) params['find[dateString][$lte]'] = args.to;
+  const dateField = DATE_FIELD[endpoint];
+  if (dateField) {
+    if (from) params[`find[${dateField}][$gte]`] = from;
+    if (args.to) params[`find[${dateField}][$lte]`] = args.to;
+  }
   return nsGet(endpoint, params);
 };
 
