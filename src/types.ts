@@ -16,7 +16,7 @@ export interface StatsArgs {
 }
 
 export interface Entry {
-  _id?: string;
+  identifier?: string;
   type?: string;
   dateString?: string;
   date?: number;
@@ -30,7 +30,7 @@ export interface Entry {
 }
 
 export interface Treatment {
-  _id: string;
+  identifier?: string;
   eventType?: string;
   created_at?: string;
   glucose?: string;
@@ -46,12 +46,42 @@ export interface Treatment {
   enteredBy?: string;
 }
 
+/** One band of a profile schedule; runs until the next band starts. */
+export interface ProfileValue {
+  time: string | null;
+  timeAsSeconds: number | null;
+  value: number | null;
+}
+
+/**
+ * One named settings store inside a profile document. Every rate is a schedule,
+ * and `units` governs sens/target_low/target_high - these are mmol/L when it
+ * reads "mmol", unlike the mg/dL used elsewhere.
+ */
+export interface ProfileStore {
+  name: string;
+  dia: number | null;
+  carbratio: ProfileValue[] | null;
+  sens: ProfileValue[] | null;
+  basal: ProfileValue[] | null;
+  target_low: ProfileValue[] | null;
+  target_high: ProfileValue[] | null;
+  carbs_hr: number | null;
+  delay: number | null;
+  units: string | null;
+  timezone: string | null;
+}
+
+/** One record in the profile-switch history. */
 export interface Profile {
-  _id: string;
-  sens?: number;
-  dia?: number;
-  carbratio?: number;
-  carbs_hr?: number;
+  identifier: string | null;
+  startDate: string | null;
+  created_at: string | null;
+  srvModified: number | null;
+  defaultProfile: string | null;
+  units: string | null;
+  stores: ProfileStore[];
+  defaultStore: ProfileStore | null;
 }
 
 export interface Status {

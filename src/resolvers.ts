@@ -6,6 +6,9 @@ import {
   InsulinStatusArgs,
   RecordInsulinOrderArgs,
   DeviceStatus,
+  Profile,
+  ProfileStore,
+  ProfileValue,
 } from './types';
 import { computeGlucoseStats, computeInsulinStatus, toMmol } from './analytics';
 import { MAX_DOCUMENTS, v3Search, windowFilter } from './nightscoutV3';
@@ -95,6 +98,64 @@ const readCollection = async <T>(
   return rows;
 };
 
+/**
+ * Profile numbers arrive as numbers from pumps but as strings from Nightscout's
+ * own profile editor, so coerce rather than trust the type.
+ */
+const num = (value: unknown): number | null => {
+  const parsed = typeof value === 'string' ? Number(value) : value;
+  return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : null;
+};
+
+const mapSchedule = (raw: unknown): ProfileValue[] | null =>
+  Array.isArray(raw)
+    ? raw.map((band: any) => ({
+        time: band?.time ?? null,
+        timeAsSeconds: num(band?.timeAsSeconds),
+        value: num(band?.value),
+      }))
+    : null;
+
+const mapProfileStore = (name: string, store: any): ProfileStore => ({
+  name,
+  dia: num(store?.dia),
+  carbratio: mapSchedule(store?.carbratio),
+  sens: mapSchedule(store?.sens),
+  basal: mapSchedule(store?.basal),
+  target_low: mapSchedule(store?.target_low),
+  target_high: mapSchedule(store?.target_high),
+  carbs_hr: num(store?.carbs_hr),
+  delay: num(store?.delay),
+  units: store?.units ?? null,
+  timezone: store?.timezone ?? null,
+});
+
+/**
+ * Flatten a profile document into the published shape.
+ *
+ * The settings live in a `store` map keyed by profile name ("Normal!",
+ * "autosens", ...) and each store holds schedules, not scalars - reading `dia`
+ * or `carbratio` off the document itself always came back null.
+ */
+const mapProfile = (doc: any): Profile => {
+  const raw = doc?.store;
+  const stores =
+    raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? Object.entries(raw).map(([name, store]) => mapProfileStore(name, store))
+      : [];
+  const defaultProfile = doc?.defaultProfile ?? null;
+  return {
+    identifier: doc?.identifier ?? null,
+    startDate: doc?.startDate ?? null,
+    created_at: doc?.created_at ?? null,
+    srvModified: num(doc?.srvModified),
+    defaultProfile,
+    units: doc?.units ?? null,
+    stores,
+    defaultStore: stores.find((store) => store.name === defaultProfile) ?? null,
+  };
+};
+
 const mapDeviceStatus = (d: any): DeviceStatus => ({
   created_at: d?.created_at,
   device: d?.device,
@@ -110,8 +171,13 @@ export const resolvers = {
     treatments: (_: unknown, args: QueryArgs) =>
       readCollection('treatments', 'created_at', args),
     profiles: async (_: unknown, args: QueryArgs) => {
-      const { rows } = await v3Search<any>('profile', { limit: args.count ?? 10 });
-      return rows;
+      // v3 returns oldest-first, so without this sort the first record was the
+      // oldest profile switch rather than the settings in force now.
+      const { rows } = await v3Search<any>('profile', {
+        sortDesc: 'startDate',
+        limit: args.count ?? 10,
+      });
+      return rows.map(mapProfile);
     },
     status: (_: unknown, args: QueryArgs) => nsGet('/status.json', { count: args.count }),
 
