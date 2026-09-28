@@ -69,13 +69,17 @@ resource "aws_lambda_function" "proxy" {
   handler          = "lambda.handler"
   filename         = local.zip_path
   source_code_hash = filebase64sha256(local.zip_path)
-  timeout          = 15
-  memory_size      = 256
+  # Long windows page through v3 in concurrent waves; 25s leaves headroom over
+  # the observed ~2s for 20 days while staying under the API Gateway HTTP API's
+  # 30s integration timeout, beyond which a longer Lambda timeout has no effect.
+  timeout     = 25
+  memory_size = 256
 
   environment {
     variables = {
       NIGHTSCOUT_URL        = var.nightscout_url
       NIGHTSCOUT_API_SECRET = var.nightscout_api_secret
+      NIGHTSCOUT_TOKEN      = var.nightscout_token
       PROXY_API_KEY         = random_password.proxy_api_key.result
     }
   }
