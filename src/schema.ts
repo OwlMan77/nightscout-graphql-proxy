@@ -166,13 +166,85 @@ export const typeDefs = /* GraphQL */ `
     notes: String!
   }
 
+  "Carb-entry rate for one local hour of day."
+  type MealLoggingHour {
+    "Local hour, 0-23."
+    hour: Int!
+    "Insulin-bearing 'Meal Bolus' records in this hour."
+    boluses: Int!
+    "How many of them had a carb entry nearby."
+    logged: Int!
+    loggedPercent: Float
+    "How many went through the Bolus Wizard - the strongest predictor of a carb entry."
+    wizardPercent: Float
+  }
+
+  "How reliably meals get a carb entry, over a window."
+  type MealLogging {
+    days: Int!
+    from: String!
+    to: String!
+    "IANA zone the hours are expressed in."
+    timezone: String!
+    "Minutes either side of a bolus in which a carb entry counts as its own."
+    pairWindowMinutes: Int!
+    "Insulin-bearing 'Meal Bolus' records: one per meal the wearer bolused for."
+    bolusCount: Int!
+    "Carb-bearing 'Meal Bolus' records in the same window."
+    carbEntryCount: Int!
+    loggedCount: Int!
+    loggedPercent: Float
+    "Carb entries with no bolus nearby, e.g. a hypo treatment."
+    carbEntriesWithoutBolus: Int!
+    wizardUsedPercent: Float
+    loggedPercentWithWizard: Float
+    loggedPercentWithoutWizard: Float
+    medianCarbsGrams: Float
+    "Days with at least one meal bolus."
+    dayCount: Int!
+    "Of those, days with no carb entry at all."
+    daysWithNoCarbEntry: Int!
+    byHour: [MealLoggingHour!]!
+  }
+
   type Query {
     """
     Glucose entries. Use 'hours' for a rolling window (last N hours) or
     'from'/'to' ISO timestamps for an explicit range. 'count' caps results.
     """
     entries(count: Int, find: String, hours: Int, from: String, to: String): [Entry]
-    treatments(count: Int, find: String, hours: Int, from: String, to: String): [Treatment]
+
+    """
+    Logged treatments, newest first. 'eventType' matches one type exactly and is
+    usually essential: a looping pump writes thousands of 'Temp Basal' and
+    automatic 'Correction Bolus' (SMB) records, which otherwise crowd out the
+    user-entered ones within 'count'. Food records are 'Meal Bolus'; a wizard
+    bolus writes the carbs and the insulin as two separate 'Meal Bolus'
+    documents seconds apart, plus a 'Bolus Wizard' record.
+    """
+    treatments(
+      count: Int
+      find: String
+      hours: Int
+      from: String
+      to: String
+      eventType: String
+    ): [Treatment]
+
+    """
+    How often a meal bolus is accompanied by a carb entry, broken down by local
+    hour of day. Answers "when do carb entries get missed" without shipping
+    thousands of treatment records to the caller.
+
+    A wizard bolus writes the carbs and the insulin as two separate 'Meal Bolus'
+    documents seconds apart, so a bolus counts as logged when a carb entry falls
+    within 'pairWindowMinutes' of it - reading 'carbs' off the bolus record
+    itself would score almost every meal as missed.
+
+    Hours are local to 'timezone', which defaults to the active profile's own
+    timezone. Percentages are null where the denominator is zero.
+    """
+    mealLogging(days: Int = 30, pairWindowMinutes: Int = 15, timezone: String): MealLogging
 
     """
     Profile-switch history, newest first. The settings in force now are the

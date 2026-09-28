@@ -77,16 +77,51 @@ it returns a bare `301` that looks like a dead link.
 | Query | Args | Returns |
 |-------|------|---------|
 | `entries` | `count`, `find`, `hours`, `from`, `to` | `[Entry]` |
-| `treatments` | `count`, `find`, `hours`, `from`, `to` | `[Treatment]` |
+| `treatments` | `count`, `find`, `hours`, `from`, `to`, `eventType` | `[Treatment]` |
 | `profiles` | `count=10` | `[Profile]` (newest first; see below) |
 | `status` | – | `Status` |
 | `glucoseStats` | `hours=24`, `low=70`, `high=180` | `GlucoseStats` |
+| `mealLogging` | `days=30`, `pairWindowMinutes=15`, `timezone` | `MealLogging` (see below) |
 | `deviceStatus` | `count=10` | `[DeviceStatus]` (incl. `pumpReservoir`) |
 | `insulinStatus` | `vialUnits=1000`, `reservoirSize=200`, `batchVials=3`, `orderAtVialsRemaining=1`, `batchNoteKeyword="batch"` | `InsulinStatus` |
 
 | Mutation | Args | Returns |
 |----------|------|---------|
 | `recordInsulinOrder` | `vials=3`, `note` | `InsulinOrderResult` |
+
+### Treatments: filter by `eventType`
+
+A looping pump buries the user's own records. Over 90 days this instance wrote 28 007
+treatments, of which **18 672 were `Temp Basal` and 7 090 were automatic `Correction Bolus`
+SMBs** (every one exactly 0.70u) — the records a human entered are ~2% of the collection. A
+windowed read without `eventType` therefore spends its whole `count` on machine noise: 30 days
+capped at 500 records came back as **1.7 days**, containing 9 meal boluses.
+
+`eventType` maps to v3's native `eventType$eq`, so `treatments(eventType: "Meal Bolus", hours:
+2160)` returns 681 documents instead of 28 007. It is the narrow, typed replacement for what
+the removed `find` argument used to allow.
+
+Food records need one more piece of context: **a wizard bolus writes the carbs and the insulin
+as two separate `Meal Bolus` documents**, a second or two apart, alongside a `Bolus Wizard`
+record holding the glucose it was calculated from. Reading `carbs` off a bolus record therefore
+scores nearly every meal as carb-free.
+
+### Meal logging (`mealLogging`)
+
+Answers "how often do meals actually get a carb entry, and when do they not" without shipping
+thousands of records to the caller. It pairs each insulin-bearing `Meal Bolus` with any
+carb-bearing one within `pairWindowMinutes`, and reports the rate broken down by **local** hour
+of day — `timezone` defaults to the active profile store's own `timezone`, because hour-of-day
+in the Lambda's UTC is meaningless for a wearer who is not in UTC.
+
+- `loggedPercentWithWizard` vs `loggedPercentWithoutWizard` is usually the headline: on this
+  instance carb entry is a side effect of taking the wizard path (50% vs 0.9%), not something
+  that varies much by the clock.
+- `carbEntriesWithoutBolus` catches carbs logged alone, e.g. treating a low.
+- Percentages are `null`, not `0`, where the denominator is zero.
+
+The pairing and aggregation live in `analytics.ts` as a pure function, so they are verifiable
+against a fixture without a Nightscout connection.
 
 ### Profiles
 
