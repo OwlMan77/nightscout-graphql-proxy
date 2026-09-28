@@ -8,6 +8,7 @@ import {
   DeviceStatus,
 } from './types';
 import { computeGlucoseStats, computeInsulinStatus, toMmol } from './analytics';
+import { MAX_DOCUMENTS, v3Search, windowFilter } from './nightscoutV3';
 
 const BASE_URL = process.env.NIGHTSCOUT_URL;
 
@@ -27,8 +28,15 @@ const nsHeaders = (): Record<string, string> => {
   return headers;
 };
 
-/** Low-level GET against the Nightscout REST API with arbitrary query params. */
-const nsGet = async (endpoint: string, params: Record<string, string | number | undefined> = {}): Promise<any> => {
+/**
+ * Low-level v1 GET. Reads run on v3 now; this remains for /status.json, whose
+ * v3 counterpart reports server and storage versions rather than the
+ * name/apiEnabled/careportalEnabled shape the Status type exposes.
+ */
+const nsGet = async (
+  endpoint: string,
+  params: Record<string, string | number | undefined> = {}
+): Promise<any> => {
   const url = new URL(`${BASE_URL}${endpoint}`);
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null) url.searchParams.append(key, String(value));
@@ -61,32 +69,30 @@ const nsPost = async (endpoint: string, payload: unknown): Promise<any> => {
 };
 
 /**
- * Which field each collection stores its timestamp in. Entries carry
- * `dateString`; treatments carry `created_at`. Filtering treatments on
- * `dateString` matches nothing, so a windowed query silently returns [].
- * Endpoints absent from this map (profile, status) are not date-filterable.
+ * Read a windowed collection through v3.
+ *
+ * v3 returns oldest-first by default whereas v1 returned newest-first, so every
+ * read sorts descending on the collection's own date field to keep the
+ * published ordering - callers rely on `count: 1` meaning "the latest one".
  */
-const DATE_FIELD: Record<string, string> = {
-  '/entries.json': 'dateString',
-  '/treatments.json': 'created_at',
-};
-
-/** Translate friendly QueryArgs (count/find/hours/from/to) into Nightscout params. */
-const fetchNightscout = (endpoint: string, args: QueryArgs): Promise<any> => {
-  const params: Record<string, string | number | undefined> = {
-    count: args.count,
-    find: args.find,
-  };
-  let from = args.from;
-  if (!from && args.hours) {
-    from = new Date(Date.now() - args.hours * 60 * 60 * 1000).toISOString();
+const readCollection = async <T>(
+  collection: string,
+  dateField: 'date' | 'created_at',
+  args: QueryArgs
+): Promise<T[]> => {
+  if (args.find) {
+    throw new GraphQLError(
+      "The 'find' argument is no longer supported: it passed raw MongoDB query " +
+        'syntax through to API v1. Use hours, from and to instead.',
+      { extensions: { code: 'UNSUPPORTED_ARGUMENT' } }
+    );
   }
-  const dateField = DATE_FIELD[endpoint];
-  if (dateField) {
-    if (from) params[`find[${dateField}][$gte]`] = from;
-    if (args.to) params[`find[${dateField}][$lte]`] = args.to;
-  }
-  return nsGet(endpoint, params);
+  const { rows } = await v3Search<T>(collection, {
+    filters: windowFilter(dateField, args),
+    sortDesc: dateField,
+    limit: args.count,
+  });
+  return rows;
 };
 
 const mapDeviceStatus = (d: any): DeviceStatus => ({
@@ -100,30 +106,61 @@ const mapDeviceStatus = (d: any): DeviceStatus => ({
 
 export const resolvers = {
   Query: {
-    entries: (_: unknown, args: QueryArgs) => fetchNightscout('/entries.json', args),
-    treatments: (_: unknown, args: QueryArgs) => fetchNightscout('/treatments.json', args),
-    profiles: (_: unknown, args: QueryArgs) => fetchNightscout('/profile.json', args),
-    status: (_: unknown, args: QueryArgs) => fetchNightscout('/status.json', args),
+    entries: (_: unknown, args: QueryArgs) => readCollection<Entry>('entries', 'date', args),
+    treatments: (_: unknown, args: QueryArgs) =>
+      readCollection('treatments', 'created_at', args),
+    profiles: async (_: unknown, args: QueryArgs) => {
+      const { rows } = await v3Search<any>('profile', { limit: args.count ?? 10 });
+      return rows;
+    },
+    status: (_: unknown, args: QueryArgs) => nsGet('/status.json', { count: args.count }),
 
     glucoseStats: async (_: unknown, { hours = 24, low, high }: StatsArgs) => {
-      // CGM reports ~12 readings/hour; over-fetch a little so the window is complete.
-      const count = Math.ceil(hours * 12 * 1.2) + 20;
-      const entries: Entry[] = await fetchNightscout('/entries.json', { hours, count });
-      return computeGlucoseStats(entries, low, high, hours);
+      // This previously fetched `hours * 12 * 1.2 + 20` readings, assuming a
+      // 5-minute CGM. This sensor reports every 60s, so roughly 80% of every
+      // window longer than ~7h was silently dropped - and always the older part,
+      // because results come back newest-first. Read the whole window instead,
+      // and fail loudly rather than return a truncated one.
+      const { rows, truncated } = await v3Search<Entry>('entries', {
+        filters: windowFilter('date', { hours }),
+        sortDesc: 'date',
+        fields: 'date,sgv',
+      });
+      if (truncated) {
+        throw new GraphQLError(
+          `The last ${hours}h contains more than ${MAX_DOCUMENTS} readings, which ` +
+            'exceeds what the proxy loads in one request. Ask for a shorter window.',
+          { extensions: { code: 'WINDOW_TOO_LARGE' } }
+        );
+      }
+      return computeGlucoseStats(rows, low, high, hours);
     },
 
     deviceStatus: async (_: unknown, args: { count?: number }) => {
-      const records: any[] = await nsGet('/devicestatus.json', { count: args.count ?? 10 });
-      return records.map(mapDeviceStatus);
+      const { rows } = await v3Search<any>('devicestatus', {
+        sortDesc: 'created_at',
+        limit: args.count ?? 10,
+      });
+      return rows.map(mapDeviceStatus);
     },
 
-    insulinStatus: async (_: unknown, {vialUnits = 1000, reservoirSize = 200, batchVials = 3, orderAtVialsRemaining = 1, batchNoteKeyword = 'batch' }: InsulinStatusArgs) => {
+    insulinStatus: async (
+      _: unknown,
+      {
+        vialUnits = 1000,
+        reservoirSize = 200,
+        batchVials = 3,
+        orderAtVialsRemaining = 1,
+        batchNoteKeyword = 'batch',
+      }: InsulinStatusArgs
+    ) => {
       const keyword = batchNoteKeyword.toLowerCase();
 
       // Notes are returned most-recent-first, so the first match is the latest.
-      const notes: any[] = await nsGet('/treatments.json', {
-        'find[eventType]': 'Note',
-        count: 50,
+      const { rows: notes } = await v3Search<any>('treatments', {
+        filters: { eventType$eq: 'Note' },
+        sortDesc: 'created_at',
+        limit: 50,
       });
       const batchNote = notes.find((n) => (n?.notes ?? '').toLowerCase().includes(keyword));
       const batchStartedAt: string | null = batchNote?.created_at ?? null;
@@ -134,9 +171,9 @@ export const resolvers = {
       let bolusInsulinSinceBatch = 0;
       let orderPlacedAt: string | null = null;
       if (batchStartedAt) {
-        const since: any[] = await nsGet('/treatments.json', {
-          'find[created_at][$gte]': batchStartedAt,
-          count: 1000,
+        const { rows: since } = await v3Search<any>('treatments', {
+          filters: { created_at$gte: batchStartedAt },
+          sortDesc: 'created_at',
         });
         reservoirChangesSinceBatch = since.filter((t) => t?.eventType === 'Insulin Change').length;
         bolusInsulinSinceBatch = since.reduce(
@@ -152,7 +189,10 @@ export const resolvers = {
         orderPlacedAt = orderNote?.created_at ?? null;
       }
 
-      const devices: any[] = await nsGet('/devicestatus.json', { count: 20 });
+      const { rows: devices } = await v3Search<any>('devicestatus', {
+        sortDesc: 'created_at',
+        limit: 20,
+      });
       const withReservoir = devices.find((d) => typeof d?.pump?.reservoir === 'number');
 
       return computeInsulinStatus({
@@ -174,8 +214,7 @@ export const resolvers = {
   },
 
   Mutation: {
-    recordInsulinOrder: async (_: unknown, {vials = 3, note = ''}: RecordInsulinOrderArgs) => {
-
+    recordInsulinOrder: async (_: unknown, { vials = 3, note = '' }: RecordInsulinOrderArgs) => {
       const extra = `${note}`;
       const createdAt = new Date().toISOString();
       const notes = `${ORDER_TAG} Ordered insulin batch: ${vials} vial(s).${extra}`;

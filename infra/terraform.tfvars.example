@@ -1,6 +1,16 @@
 # Copy to terraform.tfvars and fill in. Do NOT commit terraform.tfvars.
 # proxy_api_key is generated & rotated automatically per deploy (not set here);
 # read the current value with: terraform -chdir=infra output -raw proxy_api_key
-aws_region            = "us-east-1"
-nightscout_url        = "https://your-nightscout-site.com/api/v1"
-nightscout_api_secret = "your_hashed_api_secret"
+aws_region     = "us-east-1"
+nightscout_url = "https://your-nightscout-site.com/api/v1"
+
+# Subject token from Nightscout Admin Tools. Reads use API v3, which requires
+# auth. Give the subject the "readable" role only - a wildcard role grants crud
+# on every collection. Check what a token actually has:
+#   curl -s "<site>/api/v2/authorization/request/<token>"   -> JWT
+#   curl -s -H "Authorization: Bearer <jwt>" "<site>/api/v3/status"
+# and read `apiPermissions` in the response.
+nightscout_token = "reader-0123456789abcdef"
+
+# Only needed to enable writes (recordInsulinOrder). Leave empty for read-only.
+nightscout_api_secret = ""

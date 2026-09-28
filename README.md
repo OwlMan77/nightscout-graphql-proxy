@@ -37,8 +37,8 @@ flowchart LR
     end
 
     MCP -->|"POST /graphql<br/>x-api-key"| APIGW
-    YOGA -->|"REST reads · api-secret"| NS[("Nightscout<br/>(Heroku)")]
-    YOGA -.->|"writes · recordInsulinOrder"| NS
+    YOGA -->|"API v3 reads · Bearer JWT"| NS[("Nightscout<br/>(Heroku)")]
+    YOGA -.->|"v1 writes · recordInsulinOrder"| NS
     NS -->|JSON| YOGA
 ```
 
@@ -46,6 +46,28 @@ flowchart LR
 - **Writes** (the `recordInsulinOrder` mutation, dashed) POST a Note to Nightscout and require the
   proxy's `NIGHTSCOUT_API_SECRET`.
 - The `x-api-key` gate runs **before** GraphQL executes; a bad/missing key returns `401`.
+
+### Why API v3
+
+Reads go through Nightscout's API v3, which v1 could not do well:
+
+| | v1 | v3 |
+|---|---|---|
+| Field projection | none — full documents | `fields=date,sgv` — **~7x smaller** (33 KB vs 234 KB per 1000 readings) |
+| Pagination | `count` cap only | `limit` + `skip` |
+| Filtering | `find[field][$op]` raw Mongo syntax | `field$op` generic syntax |
+| Auth | none on this instance | subject token → JWT, required |
+
+Two v3 quirks the client handles:
+
+- **`limit` is capped at 1000** per request (1001 → `400 Parameter limit out of tolerance`). This
+  is *not* in the OpenAPI spec, which declares only `minimum: 1`. `v3Search` pages past it in
+  concurrent waves — 20 days of 1-minute readings (~24k docs) takes ~2s.
+- **v3 sorts oldest-first**; v1 returned newest-first. Every read passes `sort$desc` on the
+  collection's own date field so `count: 1` still means "the latest one".
+
+Nightscout's own docs live at `<your-site>/api3-docs/` — note the **trailing slash**, without which
+it returns a bare `301` that looks like a dead link.
 
 ## GraphQL API
 
@@ -96,9 +118,19 @@ query {
 ## Local development
 
 1. `npm install`
-2. Copy `.env.example` to `.env` and fill in `NIGHTSCOUT_URL` / `NIGHTSCOUT_API_SECRET`
-   (leave `PROXY_API_KEY` unset locally to skip the header check).
+2. Copy `.env.example` to `.env` and fill in `NIGHTSCOUT_URL` and `NIGHTSCOUT_TOKEN`
+   (leave `PROXY_API_KEY` unset locally to skip the header check; `NIGHTSCOUT_API_SECRET`
+   is only needed for writes).
 3. `npm run dev` → http://localhost:4000/graphql
+
+`NIGHTSCOUT_TOKEN` is a **subject token** from Nightscout's Admin Tools, not the API secret.
+Give the subject the `readable` role — a wildcard role grants `crud` on every collection. Check
+what a token really has:
+
+```bash
+JWT=$(curl -s "<site>/api/v2/authorization/request/<token>" | jq -r .token)
+curl -s -H "Authorization: Bearer $JWT" "<site>/api/v3/status" | jq .result.apiPermissions
+```
 
 ## Deploy to AWS Lambda (Terraform)
 
@@ -177,7 +209,8 @@ build.mjs           # esbuild bundle + zip -> dist/function.zip
 src/
   server.ts         # shared createYogaInstance()
   schema.ts         # GraphQL typeDefs
-  resolvers.ts      # Nightscout REST calls + time-window params
+  resolvers.ts      # query resolvers; reads via v3, writes via v1
+  nightscoutV3.ts   # v3 client: JWT exchange + cache, paging, filter mapping
   analytics.ts      # pure stats (average, time-in-range)
   types.ts          # TypeScript types
 infra/              # Terraform: Lambda + API Gateway HTTP API + IAM + logs
