@@ -177,3 +177,42 @@ export interface InsulinOrderResult {
   createdAt: string;
   notes: string;
 }
+
+/** The subset of a treatment document that meal-logging analysis reads. */
+export interface MealLoggingRow {
+  eventType?: string | null;
+  created_at?: string | null;
+  carbs?: number | null;
+  insulin?: number | null;
+}
+
+export interface MealLoggingHour {
+  hour: number;
+  boluses: number;
+  logged: number;
+  loggedPercent: number | null;
+  wizardPercent: number | null;
+}
+
+export interface MealLoggingStats {
+  bolusCount: number;
+  carbEntryCount: number;
+  loggedCount: number;
+  loggedPercent: number | null;
+  carbEntriesWithoutBolus: number;
+  wizardUsedPercent: number | null;
+  loggedPercentWithWizard: number | null;
+  loggedPercentWithoutWizard: number | null;
+  medianCarbsGrams: number | null;
+  dayCount: number;
+  daysWithNoCarbEntry: number;
+  byHour: MealLoggingHour[];
+}
+
+export interface MealLogging extends MealLoggingStats {
+  days: number;
+  from: string;
+  to: string;
+  timezone: string;
+  pairWindowMinutes: number;
+}

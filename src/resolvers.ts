@@ -9,8 +9,14 @@ import {
   Profile,
   ProfileStore,
   ProfileValue,
+  MealLoggingRow,
 } from './types';
-import { computeGlucoseStats, computeInsulinStatus, toMmol } from './analytics';
+import {
+  computeGlucoseStats,
+  computeInsulinStatus,
+  computeMealLogging,
+  toMmol,
+} from './analytics';
 import { MAX_DOCUMENTS, v3Search, windowFilter } from './nightscoutV3';
 
 const BASE_URL = process.env.NIGHTSCOUT_URL;
@@ -104,6 +110,47 @@ const readCollection = async <T>(
 };
 
 /**
+ * Split a timestamp into the local hour and calendar date of an IANA zone.
+ * Intl is the only dependency-free way to do this, and the hour of day is
+ * meaningless in UTC for a wearer who is not in UTC.
+ */
+const localPartsIn = (timezone: string) => {
+  const format = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+  });
+  return (iso: string): { hour: number; date: string } => {
+    const parts = format.formatToParts(new Date(iso));
+    const get = (type: string): string =>
+      parts.find((part) => part.type === type)?.value ?? '';
+    // hour12:false reports midnight as '24' in some runtimes.
+    const hour = Number(get('hour')) % 24;
+    return { hour, date: `${get('year')}-${get('month')}-${get('day')}` };
+  };
+};
+
+/** The active profile's own timezone, or UTC when the profile does not say. */
+const wearerTimezone = async (): Promise<string> => {
+  try {
+    const { rows } = await v3Search<any>('profile', { sortDesc: 'startDate', limit: 1 });
+    const doc = rows[0];
+    const zone = doc?.store?.[doc?.defaultProfile]?.timezone;
+    if (typeof zone === 'string' && zone) {
+      // Reject anything Intl cannot use rather than failing the whole query.
+      new Intl.DateTimeFormat('en-CA', { timeZone: zone });
+      return zone;
+    }
+  } catch {
+    // fall through to UTC
+  }
+  return 'UTC';
+};
+
+/**
  * Profile numbers arrive as numbers from pumps but as strings from Nightscout's
  * own profile editor, so coerce rather than trust the type.
  */
@@ -175,6 +222,52 @@ export const resolvers = {
     entries: (_: unknown, args: QueryArgs) => readCollection<Entry>('entries', 'date', args),
     treatments: (_: unknown, args: QueryArgs) =>
       readCollection('treatments', 'created_at', args),
+    mealLogging: async (
+      _: unknown,
+      args: { days?: number; pairWindowMinutes?: number; timezone?: string }
+    ) => {
+      const days = Math.max(1, args.days ?? 30);
+      const pairWindowMinutes = Math.max(0, args.pairWindowMinutes ?? 15);
+      const to = new Date();
+      const window = {
+        from: new Date(to.getTime() - days * 86_400_000).toISOString(),
+        to: to.toISOString(),
+      };
+      const timezone = args.timezone ?? (await wearerTimezone());
+      let localParts: (iso: string) => { hour: number; date: string };
+      try {
+        localParts = localPartsIn(timezone);
+      } catch {
+        throw new GraphQLError(`Unknown timezone '${timezone}'.`, {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
+      // Two fetches because v3's eventType filter matches a single value.
+      // Together they are a few hundred documents where the unfiltered window
+      // would be tens of thousands.
+      const [meals, wizards] = await Promise.all(
+        ['Meal Bolus', 'Bolus Wizard'].map((eventType) =>
+          v3Search<MealLoggingRow>('treatments', {
+            filters: {
+              ...windowFilter('created_at', window),
+              'eventType$eq': eventType,
+            },
+            sortDesc: 'created_at',
+          })
+        )
+      );
+      return {
+        days,
+        ...window,
+        timezone,
+        pairWindowMinutes,
+        ...computeMealLogging([...meals.rows, ...wizards.rows], {
+          pairWindowMinutes,
+          localParts,
+        }),
+      };
+    },
+
     profiles: async (_: unknown, args: QueryArgs) => {
       // v3 returns oldest-first, so without this sort the first record was the
       // oldest profile switch rather than the settings in force now.
