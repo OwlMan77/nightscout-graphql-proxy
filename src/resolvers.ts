@@ -91,7 +91,12 @@ const readCollection = async <T>(
     );
   }
   const { rows } = await v3Search<T>(collection, {
-    filters: windowFilter(dateField, args),
+    filters: {
+      ...windowFilter(dateField, args),
+      // Treatments are dominated by Temp Basal and loop SMBs, so a caller after
+      // meal records would spend its whole `count` budget on noise without this.
+      ...(args.eventType ? { 'eventType$eq': args.eventType } : {}),
+    },
     sortDesc: dateField,
     limit: args.count,
   });

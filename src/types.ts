@@ -7,6 +7,8 @@ export interface QueryArgs {
   from?: string;
   /** ISO timestamp (inclusive upper bound) for date-range filtering. */
   to?: string;
+  /** Treatments only: match one eventType exactly, e.g. 'Meal Bolus'. */
+  eventType?: string;
 }
 
 export interface StatsArgs {

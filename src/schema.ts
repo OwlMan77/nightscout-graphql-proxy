@@ -172,7 +172,23 @@ export const typeDefs = /* GraphQL */ `
     'from'/'to' ISO timestamps for an explicit range. 'count' caps results.
     """
     entries(count: Int, find: String, hours: Int, from: String, to: String): [Entry]
-    treatments(count: Int, find: String, hours: Int, from: String, to: String): [Treatment]
+
+    """
+    Logged treatments, newest first. 'eventType' matches one type exactly and is
+    usually essential: a looping pump writes thousands of 'Temp Basal' and
+    automatic 'Correction Bolus' (SMB) records, which otherwise crowd out the
+    user-entered ones within 'count'. Food records are 'Meal Bolus'; a wizard
+    bolus writes the carbs and the insulin as two separate 'Meal Bolus'
+    documents seconds apart, plus a 'Bolus Wizard' record.
+    """
+    treatments(
+      count: Int
+      find: String
+      hours: Int
+      from: String
+      to: String
+      eventType: String
+    ): [Treatment]
 
     """
     Profile-switch history, newest first. The settings in force now are the
