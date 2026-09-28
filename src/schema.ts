@@ -1,6 +1,6 @@
 export const typeDefs = /* GraphQL */ `
   type Entry {
-    _id: String
+    identifier: String
     type: String
     dateString: String
     date: Float
@@ -14,7 +14,7 @@ export const typeDefs = /* GraphQL */ `
   }
 
   type Treatment {
-    _id: ID!
+    identifier: String
     eventType: String
     created_at: String
     glucose: String
@@ -30,12 +30,72 @@ export const typeDefs = /* GraphQL */ `
     enteredBy: String
   }
 
+  """
+  One band of a profile schedule. 'time' is local clock time in the profile's
+  own timezone and 'timeAsSeconds' is seconds from local midnight; the band runs
+  until the next one starts.
+  """
+  type ProfileValue {
+    time: String
+    timeAsSeconds: Int
+    value: Float
+  }
+
+  """
+  One named settings store inside a profile document, e.g. "Normal!" or
+  "autosens". Every rate is a schedule of time-banded values, never a single
+  number.
+
+  'units' is the glucose unit these settings are expressed in, and it governs
+  'sens', 'target_low' and 'target_high' - when it is "mmol" those are mmol/L,
+  not the mg/dL used everywhere else in this schema. 'carbratio' is grams of
+  carbohydrate per unit of insulin and 'dia' is hours, in either unit system.
+  """
+  type ProfileStore {
+    "The store's key within the profile document."
+    name: String!
+    "Duration of insulin action, in hours."
+    dia: Float
+    "Grams of carbohydrate per unit of insulin."
+    carbratio: [ProfileValue]
+    "Insulin sensitivity: glucose drop per unit, in this store's 'units'."
+    sens: [ProfileValue]
+    "Basal rate, in units per hour."
+    basal: [ProfileValue]
+    "Lower bound of the target range, in this store's 'units'."
+    target_low: [ProfileValue]
+    "Upper bound of the target range, in this store's 'units'."
+    target_high: [ProfileValue]
+    "Carbohydrate absorption per hour. Absent from pump-uploaded profiles."
+    carbs_hr: Float
+    "Carb absorption delay in minutes. Absent from pump-uploaded profiles."
+    delay: Float
+    """Either "mmol" or "mg/dl"."""
+    units: String
+    timezone: String
+  }
+
+  """
+  A Nightscout profile document: one record in the profile-switch history,
+  holding every named store that was uploaded at that moment. 'defaultProfile'
+  names the store that was active, and 'defaultStore' resolves it.
+
+  Doc-level 'units' is only set by profiles created in Nightscout itself; for
+  pump-uploaded profiles the unit lives on each store.
+  """
   type Profile {
-    _id: ID!
-    sens: Int
-    dia: Int
-    carbratio: Int
-    carbs_hr: Int
+    identifier: String
+    "When this profile took effect."
+    startDate: String
+    created_at: String
+    "Server modification time, epoch milliseconds."
+    srvModified: Float
+    "Name of the store that was active."
+    defaultProfile: String
+    units: String
+    stores: [ProfileStore]
+    "The store named by 'defaultProfile', or null if it is missing."
+    defaultStore: ProfileStore
   }
 
   type Status {
@@ -113,7 +173,12 @@ export const typeDefs = /* GraphQL */ `
     """
     entries(count: Int, find: String, hours: Int, from: String, to: String): [Entry]
     treatments(count: Int, find: String, hours: Int, from: String, to: String): [Treatment]
-    profiles: [Profile]
+
+    """
+    Profile-switch history, newest first. The settings in force now are the
+    first record's 'defaultStore'.
+    """
+    profiles(count: Int = 10): [Profile]
     status: Status
 
     """

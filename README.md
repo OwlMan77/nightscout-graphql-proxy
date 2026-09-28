@@ -58,13 +58,16 @@ Reads go through Nightscout's API v3, which v1 could not do well:
 | Filtering | `find[field][$op]` raw Mongo syntax | `field$op` generic syntax |
 | Auth | none on this instance | subject token → JWT, required |
 
-Two v3 quirks the client handles:
+Three v3 quirks the client handles:
 
 - **`limit` is capped at 1000** per request (1001 → `400 Parameter limit out of tolerance`). This
   is *not* in the OpenAPI spec, which declares only `minimum: 1`. `v3Search` pages past it in
   concurrent waves — 20 days of 1-minute readings (~24k docs) takes ~2s.
 - **v3 sorts oldest-first**; v1 returned newest-first. Every read passes `sort$desc` on the
   collection's own date field so `count: 1` still means "the latest one".
+- **There is no `_id`.** v3 renames it `identifier` on every collection, so the schema exposes
+  `identifier`. A field kept as `_id: ID!` resolves to null and, being non-null, nulls out the
+  whole element — which is how `treatments` and `profiles` came back as a list of `null`s.
 
 Nightscout's own docs live at `<your-site>/api3-docs/` — note the **trailing slash**, without which
 it returns a bare `301` that looks like a dead link.
@@ -75,7 +78,7 @@ it returns a bare `301` that looks like a dead link.
 |-------|------|---------|
 | `entries` | `count`, `find`, `hours`, `from`, `to` | `[Entry]` |
 | `treatments` | `count`, `find`, `hours`, `from`, `to` | `[Treatment]` |
-| `profiles` | – | `[Profile]` |
+| `profiles` | `count=10` | `[Profile]` (newest first; see below) |
 | `status` | – | `Status` |
 | `glucoseStats` | `hours=24`, `low=70`, `high=180` | `GlucoseStats` |
 | `deviceStatus` | `count=10` | `[DeviceStatus]` (incl. `pumpReservoir`) |
@@ -84,6 +87,23 @@ it returns a bare `301` that looks like a dead link.
 | Mutation | Args | Returns |
 |----------|------|---------|
 | `recordInsulinOrder` | `vials=3`, `note` | `InsulinOrderResult` |
+
+### Profiles
+
+A Nightscout profile document is **not** a flat settings record. It is one entry in a
+profile-switch history, and the settings hang off a `store` map keyed by profile name
+(`"Normal!"`, `"LocalProfile1"`, `"autosens"`), with `defaultProfile` naming the active one.
+`profiles` flattens that into `stores` plus a resolved `defaultStore`.
+
+- **Every rate is a schedule**, not a scalar: `carbratio`, `sens`, `basal`, `target_low` and
+  `target_high` are arrays of `{ time, timeAsSeconds, value }` bands. Only `dia`, `carbs_hr`
+  and `delay` are single numbers.
+- **Each store carries its own `units`.** This pump uploads `"mmol"`, so `sens` and the
+  targets are **mmol/L** — the one place in this schema that is not mg/dL.
+- `carbs_hr` and `delay` only exist on profiles created inside Nightscout; pump-uploaded
+  profiles omit them, as does doc-level `units`.
+- The list is sorted `startDate` descending, so the settings in force now are
+  `profiles[0].defaultStore`.
 
 ### Insulin supply tracking (`insulinStatus` + `recordInsulinOrder`)
 
