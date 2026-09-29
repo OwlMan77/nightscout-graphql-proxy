@@ -208,14 +208,33 @@ const mapProfile = (doc: any): Profile => {
   };
 };
 
-const mapDeviceStatus = (d: any): DeviceStatus => ({
-  created_at: d?.created_at,
-  device: d?.device,
-  uploaderBattery: d?.uploaderBattery,
-  pumpReservoir: typeof d?.pump?.reservoir === 'number' ? d.pump.reservoir : null,
-  pumpClock: d?.pump?.clock ?? null,
-  pumpStatus: d?.pump?.status?.status ?? null,
-});
+const mapDeviceStatus = (d: any): DeviceStatus => {
+  // AAPS writes two shapes of devicestatus document a minute or two apart: a
+  // pump-only one, and a loop one carrying `openaps`. Around half arrive with
+  // `openaps: {}` - 105 of 200 consecutive documents - so every field below is
+  // null on those, and a caller wanting the current IOB has to read a few
+  // records back rather than assume the newest one has it.
+  const iob = d?.openaps?.iob;
+  const suggested = d?.openaps?.suggested;
+  const num = (value: unknown) => (typeof value === 'number' ? value : null);
+  return {
+    created_at: d?.created_at,
+    device: d?.device,
+    uploaderBattery: d?.uploaderBattery,
+    pumpReservoir: typeof d?.pump?.reservoir === 'number' ? d.pump.reservoir : null,
+    pumpClock: d?.pump?.clock ?? null,
+    pumpStatus: d?.pump?.status?.status ?? null,
+    iob: num(iob?.iob),
+    basalIob: num(iob?.basaliob),
+    insulinActivity: num(iob?.activity),
+    cob: num(suggested?.COB),
+    sensitivityRatio: num(suggested?.sensitivityRatio),
+    eventualGlucose: num(suggested?.eventualBG),
+    insulinRequired: num(suggested?.insulinReq),
+    loopReason: suggested?.reason ?? null,
+    loopAt: iob?.time ?? suggested?.timestamp ?? null,
+  };
+};
 
 export const resolvers = {
   Query: {

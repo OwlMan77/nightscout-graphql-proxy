@@ -126,6 +126,12 @@ export const typeDefs = /* GraphQL */ `
   Latest pump / uploader device status. 'pumpReservoir' is the units of insulin
   remaining in the pump reservoir.
   """
+  """
+  One pump-and-loop status upload. AAPS writes two shapes of these a minute or
+  two apart - a pump-only one and a loop one - so roughly half of all documents
+  have every loop field below null. Read several records back to find the most
+  recent completed loop pass rather than assuming the newest document has one.
+  """
   type DeviceStatus {
     created_at: String
     device: String
@@ -133,6 +139,48 @@ export const typeDefs = /* GraphQL */ `
     pumpReservoir: Float
     pumpClock: String
     pumpStatus: String
+
+    """
+    Insulin on board in units, as the loop itself computed it. A bolus goes on
+    acting for the profile's dia (5 hours here), so this is routinely several
+    units when nothing has been delivered for an hour or more, and no other
+    field here substitutes for it.
+    """
+    iob: Float
+    """
+    The part of iob attributed to basal rather than boluses. Goes negative
+    after the loop has been suppressing basal.
+    """
+    basalIob: Float
+    """How fast that insulin is acting right now, units per minute."""
+    insulinActivity: Float
+    """
+    Carbs on board in grams. Zero whenever no carbs were entered, which is most
+    of the time on this account - it reflects what was logged, not what was
+    eaten, and a protein or fat meal legitimately produces zero.
+    """
+    cob: Float
+    """
+    Autosens multiplier applied to the profile sensitivity: 1.0 is the profile
+    as configured, above 1.0 means the loop judged the wearer more sensitive.
+    """
+    sensitivityRatio: Float
+    """Where the loop expected glucose to settle, mg/dL."""
+    eventualGlucose: Float
+    """
+    Units the loop calculated it wanted on that pass, and then acted on itself
+    through an SMB or a temp basal. It is a record of what the algorithm did for
+    that one minute's glucose, IOB and trend - all long since moved - and not a
+    dose for anyone to act on or relay.
+    """
+    insulinRequired: Float
+    """
+    The loop's own one-line account of the pass: COB, deviation, BGI, ISF, carb
+    ratio, target and its predicted curves.
+    """
+    loopReason: String
+    """When the loop pass ran, slightly before created_at."""
+    loopAt: String
   }
 
   """
