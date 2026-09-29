@@ -1,6 +1,8 @@
 // Bundles the Lambda handler into a single file and zips it for deployment.
 // Cross-platform (Node only) so it works identically on Windows/macOS/Linux.
 import { build } from 'esbuild';
+// Fails the build on invalid SDL - see the comment in check-schema.mjs.
+import './check-schema.mjs';
 import AdmZip from 'adm-zip';
 import { mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';

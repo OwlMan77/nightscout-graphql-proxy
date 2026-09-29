@@ -113,6 +113,19 @@ export interface DeviceStatus {
   pumpReservoir?: number | null;
   pumpClock?: string | null;
   pumpStatus?: string | null;
+  /**
+   * The loop's own arithmetic, from the `openaps` section. Null on the roughly
+   * half of documents that carry `openaps: {}` - see mapDeviceStatus.
+   */
+  iob?: number | null;
+  basalIob?: number | null;
+  insulinActivity?: number | null;
+  cob?: number | null;
+  sensitivityRatio?: number | null;
+  eventualGlucose?: number | null;
+  insulinRequired?: number | null;
+  loopReason?: string | null;
+  loopAt?: string | null;
 }
 
 export interface InsulinStatusArgs {

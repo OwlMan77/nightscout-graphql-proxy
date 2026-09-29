@@ -82,12 +82,40 @@ it returns a bare `301` that looks like a dead link.
 | `status` | – | `Status` |
 | `glucoseStats` | `hours=24`, `low=70`, `high=180` | `GlucoseStats` |
 | `mealLogging` | `days=30`, `pairWindowMinutes=15`, `timezone` | `MealLogging` (see below) |
-| `deviceStatus` | `count=10` | `[DeviceStatus]` (incl. `pumpReservoir`) |
+| `deviceStatus` | `count=10` | `[DeviceStatus]` (pump **and loop**: `iob`, `cob`, see below) |
 | `insulinStatus` | `vialUnits=1000`, `reservoirSize=200`, `batchVials=3`, `orderAtVialsRemaining=1`, `batchNoteKeyword="batch"` | `InsulinStatus` |
 
 | Mutation | Args | Returns |
 |----------|------|---------|
 | `recordInsulinOrder` | `vials=3`, `note` | `InsulinOrderResult` |
+
+### Device status: the loop's own arithmetic
+
+`deviceStatus` used to expose only the pump half of each document. AAPS also
+uploads what the loop computed, in an `openaps` section, and that is now mapped:
+
+| Field | Source | Meaning |
+|---|---|---|
+| `iob` | `openaps.iob.iob` | Insulin on board, units. A bolus keeps acting for the profile's `dia` (5 h here). |
+| `basalIob` | `openaps.iob.basaliob` | The basal share of it; negative after basal has been suppressed. |
+| `insulinActivity` | `openaps.iob.activity` | How fast that insulin is acting, u/min. |
+| `cob` | `openaps.suggested.COB` | Carbs on board, grams. What was *logged*, not what was eaten. |
+| `sensitivityRatio` | `openaps.suggested.sensitivityRatio` | Autosens multiplier; 1.0 is the profile as configured. |
+| `eventualGlucose` | `openaps.suggested.eventualBG` | Where the loop expected it to settle, mg/dL. |
+| `insulinRequired` | `openaps.suggested.insulinReq` | Units the loop wanted on that pass and then acted on itself. |
+| `loopReason` | `openaps.suggested.reason` | Its own one-line account: COB, deviation, BGI, ISF, CR, target, predictions. |
+| `loopAt` | `openaps.iob.time` | When the pass ran, slightly before `created_at`. |
+
+**Half the documents have none of it.** AAPS writes a pump-only status and a loop
+status a minute or two apart, and 105 of 200 consecutive documents arrive with
+`openaps: {}`. Every field above is therefore `null` on those, so a caller after
+the current IOB must read several records back rather than trust the newest one.
+`count=10` is usually enough; `count=1` frequently is not.
+
+`insulinRequired` is a record of what the algorithm did for one minute's glucose,
+IOB and trend. It is not a dose for a caller to relay - `doseGuidance` in the MCP
+is the only place that composes these numbers into a recommendation, and it shows
+its arithmetic.
 
 ### Treatments: filter by `eventType`
 
