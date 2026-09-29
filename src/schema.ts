@@ -123,14 +123,13 @@ export const typeDefs = /* GraphQL */ `
   }
 
   """
-  Latest pump / uploader device status. 'pumpReservoir' is the units of insulin
+  One pump and loop status upload. 'pumpReservoir' is the units of insulin
   remaining in the pump reservoir.
-  """
-  """
-  One pump-and-loop status upload. AAPS writes two shapes of these a minute or
-  two apart - a pump-only one and a loop one - so roughly half of all documents
-  have every loop field below null. Read several records back to find the most
-  recent completed loop pass rather than assuming the newest document has one.
+
+  AAPS writes two shapes of these a minute or two apart - a pump-only one and a
+  loop one - so roughly half of all documents have every loop field below null.
+  Read several records back to find the most recent completed loop pass rather
+  than assuming the newest document has one.
   """
   type DeviceStatus {
     created_at: String
